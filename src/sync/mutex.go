@@ -23,8 +23,8 @@ func throw(string) // provided by runtime
 //
 // A Mutex must not be copied after first use.
 type Mutex struct {
-	state int32
-	sema  uint32
+	state int32 // 锁状态
+	sema  uint32 // 地址，用于挂起和唤醒g的key
 }
 
 // A Locker represents an object that can be locked and unlocked.
