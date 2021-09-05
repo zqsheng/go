@@ -90,10 +90,12 @@ func (m *Mutex) lockSlow() {
 	for {
 		// Don't spin in starvation mode, ownership is handed off to waiters
 		// so we won't be able to acquire the mutex anyway.
+		// 状态: 已加锁，非饥饿模式且可以自旋
 		if old&(mutexLocked|mutexStarving) == mutexLocked && runtime_canSpin(iter) {
 			// Active spinning makes sense.
 			// Try to set mutexWoken flag to inform Unlock
 			// to not wake other blocked goroutines.
+			// 非唤醒且锁状态非唤醒且waiter数量不等于0，尝试一次更新锁状态为唤醒
 			if !awoke && old&mutexWoken == 0 && old>>mutexWaiterShift != 0 &&
 				atomic.CompareAndSwapInt32(&m.state, old, old|mutexWoken) {
 				awoke = true
@@ -103,11 +105,16 @@ func (m *Mutex) lockSlow() {
 			old = m.state
 			continue
 		}
+		// 1.锁已经释放
+		// 2.饥饿模式
+		// 3.在锁未释放或者在非饥饿模式下，自旋次数达到上线
 		new := old
 		// Don't try to acquire starving mutex, new arriving goroutines must queue.
+		// 非饥饿模式下，新的锁状态为加锁
 		if old&mutexStarving == 0 {
 			new |= mutexLocked
 		}
+		// 在已加锁或饥饿模式下，等待者数量+1
 		if old&(mutexLocked|mutexStarving) != 0 {
 			new += 1 << mutexWaiterShift
 		}
@@ -126,6 +133,7 @@ func (m *Mutex) lockSlow() {
 			}
 			new &^= mutexWoken
 		}
+		// cas更新锁状态
 		if atomic.CompareAndSwapInt32(&m.state, old, new) {
 			if old&(mutexLocked|mutexStarving) == 0 {
 				break // locked the mutex with CAS
@@ -135,7 +143,10 @@ func (m *Mutex) lockSlow() {
 			if waitStartTime == 0 {
 				waitStartTime = runtime_nanotime()
 			}
+			// 向sema申请资源，无资源时则阻塞当前g被放入等待队列，有资源时会被自动唤醒，解除阻塞
 			runtime_SemacquireMutex(&m.sema, queueLifo, 1)
+			// 当前g从等待队列中唤醒
+			// 上一次状态是饥饿模式或者当前g的等待时间大于1ms，设置饥饿标志
 			starving = starving || runtime_nanotime()-waitStartTime > starvationThresholdNs
 			old = m.state
 			if old&mutexStarving != 0 {
@@ -161,6 +172,7 @@ func (m *Mutex) lockSlow() {
 			awoke = true
 			iter = 0
 		} else {
+			// cas失败，获取最新的状态，进入下次循环
 			old = m.state
 		}
 	}

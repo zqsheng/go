@@ -8,6 +8,8 @@ import "unsafe"
 
 // defined in package runtime
 
+// Semacquire 等待直到*s>0并且自动减一
+// 简单的sleep原语，用于同步库，不应该被直接使用
 // Semacquire waits until *s > 0 and then atomically decrements it.
 // It is intended as a simple sleep primitive for use by the synchronization
 // library and should not be used directly.
