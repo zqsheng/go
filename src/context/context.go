@@ -58,7 +58,7 @@ import (
 // A Context carries a deadline, a cancellation signal, and other values across
 // API boundaries.
 //
-// Context's methods may be called by multiple goroutines simultaneously.
+// Context's methods may be called by multiple goroutines simultaneously(同时的).
 type Context interface {
 	// Deadline returns the time when work done on behalf of this context
 	// should be canceled. Deadline returns ok==false when no deadline is
@@ -253,6 +253,7 @@ func propagateCancel(parent Context, child canceler) {
 		return // parent is never canceled
 	}
 
+	// 尝试一次检查parent ctx 否是取消
 	select {
 	case <-done:
 		// parent is already canceled
@@ -264,6 +265,7 @@ func propagateCancel(parent Context, child canceler) {
 	if p, ok := parentCancelCtx(parent); ok {
 		p.mu.Lock()
 		if p.err != nil {
+			// 第二次尝试检查parent是否已经取消，锁内
 			// parent has already been canceled
 			child.cancel(false, p.err)
 		} else {
@@ -274,6 +276,7 @@ func propagateCancel(parent Context, child canceler) {
 		}
 		p.mu.Unlock()
 	} else {
+		// todo
 		atomic.AddInt32(&goroutines, +1)
 		go func() {
 			select {
@@ -299,10 +302,12 @@ func parentCancelCtx(parent Context) (*cancelCtx, bool) {
 	if done == closedchan || done == nil {
 		return nil, false
 	}
+	// todo
 	p, ok := parent.Value(&cancelCtxKey).(*cancelCtx)
 	if !ok {
 		return nil, false
 	}
+	// todo
 	pdone, _ := p.done.Load().(chan struct{})
 	if pdone != done {
 		return nil, false
@@ -355,6 +360,7 @@ func (c *cancelCtx) Value(key interface{}) interface{} {
 	return c.Context.Value(key)
 }
 
+// 懒加载的方式创建 done chan
 func (c *cancelCtx) Done() <-chan struct{} {
 	d := c.done.Load()
 	if d != nil {
@@ -363,6 +369,7 @@ func (c *cancelCtx) Done() <-chan struct{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	d = c.done.Load()
+	// 双重检测
 	if d == nil {
 		d = make(chan struct{})
 		c.done.Store(d)
@@ -370,6 +377,7 @@ func (c *cancelCtx) Done() <-chan struct{} {
 	return d.(chan struct{})
 }
 
+// get err加锁，保证读写安全
 func (c *cancelCtx) Err() error {
 	c.mu.Lock()
 	err := c.err
@@ -391,11 +399,12 @@ func contextName(c Context) string {
 func (c *cancelCtx) String() string {
 	return contextName(c.Context) + ".WithCancel"
 }
-
+// 取消等价于关闭done
 // cancel closes c.done, cancels each of c's children, and, if
 // removeFromParent is true, removes c from its parent's children.
 func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 	if err == nil {
+		// err 需要通过Context.Err返回,绝对不能为空
 		panic("context: internal error: missing cancel error")
 	}
 	c.mu.Lock()
@@ -406,6 +415,7 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 	c.err = err
 	d, _ := c.done.Load().(chan struct{})
 	if d == nil {
+		// 直接放入已经被关闭chan
 		c.done.Store(closedchan)
 	} else {
 		close(d)
@@ -414,10 +424,12 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 		// NOTE: acquiring the child's lock while holding parent's lock.
 		child.cancel(false, err)
 	}
+	// 置空子context
 	c.children = nil
+	// 当前ctx mu控制字段读写操作完成，锁释放
 	c.mu.Unlock()
-
 	if removeFromParent {
+		// 把当前ctx,从父ctx中删除
 		removeChild(c.Context, c)
 	}
 }
@@ -527,6 +539,7 @@ func WithValue(parent Context, key, val interface{}) Context {
 	if key == nil {
 		panic("nil key")
 	}
+	// key的类型必须可以比较 todo
 	if !reflectlite.TypeOf(key).Comparable() {
 		panic("key is not comparable")
 	}
@@ -563,5 +576,6 @@ func (c *valueCtx) Value(key interface{}) interface{} {
 	if c.key == key {
 		return c.val
 	}
+	// 向上不断查找，直到emptyCtx为止
 	return c.Context.Value(key)
 }
